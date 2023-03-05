@@ -1,8 +1,11 @@
+use async_trait::async_trait;
 use chrono::prelude::*;
 use clap::Parser;
 use std::io::{Error, ErrorKind};
+use std::os::unix::process;
+use std::{thread, time};
 use yahoo_finance_api as yahoo;
-use async_trait::async_trait;
+use tokio::task::JoinSet;
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -22,7 +25,6 @@ struct Opts {
 ///
 #[async_trait]
 trait AsyncStockSignal {
-
     ///
     /// The signal's data type.
     ///
@@ -105,7 +107,7 @@ impl AsyncStockSignal for MaxPrice {
 /// Window function to create a simple moving average
 ///
 struct WindowedSMA {
-    window_size: usize
+    window_size: usize,
 }
 
 #[async_trait]
@@ -151,6 +153,56 @@ async fn fetch_closing_data(
     }
 }
 
+async fn process_symbol(
+    symbol: String,
+    beginning: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> std::io::Result<()> {
+    let closes = fetch_closing_data(&symbol, &beginning, &end).await?;
+
+    dbg!("Working...");
+
+    if !closes.is_empty() {
+        // min/max of the period. unwrap() because those are Option types
+        let price_diff = PriceDifference {};
+        let max = MaxPrice {};
+        let min = MinPrice {};
+        let windowed_sma = WindowedSMA { window_size: 30 };
+
+        let period_max: f64 = max.calculate(&closes).await.unwrap();
+        let period_min: f64 = min.calculate(&closes).await.unwrap();
+        let last_price = *closes.last().unwrap_or(&0.0);
+        let (_, pct_change) = price_diff.calculate(&closes).await.unwrap_or((0.0, 0.0));
+        let sma = windowed_sma.calculate(&closes).await.unwrap_or_default();
+
+        // a simple way to output CSV data
+        println!(
+            "{},{},${:.2},{:.2}%,${:.2},${:.2},${:.2}",
+            beginning.to_rfc3339(),
+            symbol,
+            last_price,
+            pct_change * 100.0,
+            period_min,
+            period_max,
+            sma.last().unwrap_or(&0.0)
+        );
+    }
+    Ok(())
+}
+
+async fn process_symbols(symbols: String, beginning: DateTime<Utc>, end: DateTime<Utc>) {
+    let symbol_strings: Vec<String> = symbols.split(',').map(|s| s.to_owned()).collect();
+    // let mut set = JoinSet::new();
+
+    for symbol in symbol_strings {
+    dbg!("Pinting");
+       tokio::task::spawn( async move { process_symbol(symbol.clone(), beginning.clone(), end.clone()).await }  );
+    }
+
+    
+
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let opts = Opts::parse();
@@ -159,40 +211,20 @@ async fn main() -> std::io::Result<()> {
 
     // a simple way to output a CSV header
     println!("period start,symbol,price,change %,min,max,30d avg");
-    for symbol in opts.symbols.split(',') {
-        let closes = fetch_closing_data(&symbol, &from, &to).await?;
-        if !closes.is_empty() {
-                // min/max of the period. unwrap() because those are Option types
-                let price_diff = PriceDifference {};
-                let max = MaxPrice{};
-                let min = MinPrice{};
-                let windowed_sma = WindowedSMA { window_size: 30};
 
-                let period_max: f64 = max.calculate(&closes).await.unwrap();
-                let period_min: f64 = min.calculate(&closes).await.unwrap();
-                let last_price = *closes.last().unwrap_or(&0.0);
-                let (_, pct_change) = price_diff.calculate(&closes).await.unwrap_or((0.0, 0.0));
-                let sma = windowed_sma.calculate(&closes).await.unwrap_or_default();
+    let thirty_seconds = time::Duration::from_secs(5);
 
-            // a simple way to output CSV data
-            println!(
-                "{},{},${:.2},{:.2}%,${:.2},${:.2},${:.2}",
-                from.to_rfc3339(),
-                symbol,
-                last_price,
-                pct_change * 100.0,
-                period_min,
-                period_max,
-                sma.last().unwrap_or(&0.0)
-            );
-        }
+    loop {
+        dbg!("Looping...");
+        tokio::task::spawn(process_symbols(opts.symbols.clone(), from.clone(), to.clone()));
+        thread::sleep(thirty_seconds);
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
+
     use super::*;
 
     #[tokio::test]
@@ -202,7 +234,9 @@ mod tests {
         assert_eq!(signal.calculate(&[1.0]).await, Some((0.0, 0.0)));
         assert_eq!(signal.calculate(&[1.0, 0.0]).await, Some((-1.0, -1.0)));
         assert_eq!(
-            signal.calculate(&[2.0, 3.0, 5.0, 6.0, 1.0, 2.0, 10.0]).await,
+            signal
+                .calculate(&[2.0, 3.0, 5.0, 6.0, 1.0, 2.0, 10.0])
+                .await,
             Some((8.0, 4.0))
         );
         assert_eq!(
@@ -218,7 +252,9 @@ mod tests {
         assert_eq!(signal.calculate(&[1.0]).await, Some(1.0));
         assert_eq!(signal.calculate(&[1.0, 0.0]).await, Some(0.0));
         assert_eq!(
-            signal.calculate(&[2.0, 3.0, 5.0, 6.0, 1.0, 2.0, 10.0]).await,
+            signal
+                .calculate(&[2.0, 3.0, 5.0, 6.0, 1.0, 2.0, 10.0])
+                .await,
             Some(1.0)
         );
         assert_eq!(
@@ -234,7 +270,9 @@ mod tests {
         assert_eq!(signal.calculate(&[1.0]).await, Some(1.0));
         assert_eq!(signal.calculate(&[1.0, 0.0]).await, Some(1.0));
         assert_eq!(
-            signal.calculate(&[2.0, 3.0, 5.0, 6.0, 1.0, 2.0, 10.0]).await,
+            signal
+                .calculate(&[2.0, 3.0, 5.0, 6.0, 1.0, 2.0, 10.0])
+                .await,
             Some(10.0)
         );
         assert_eq!(
