@@ -189,16 +189,6 @@ async fn process_symbols(symbols: String, beginning: DateTime<Utc>, end: DateTim
             );
         }
     }
-
-    // for c in closes {
-    //     match c {
-    //         Ok((symbol, close_data)) => 
-              
-    //         _ => println!("Nothing!")
-    //     }
-       
-    // }
-
 }
 
 #[tokio::main]
