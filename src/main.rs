@@ -160,39 +160,44 @@ async fn process_symbols(symbols: String, beginning: DateTime<Utc>, end: DateTim
     }
 
     let closes = futures::future::join_all(futures).await;
+    let mut closes_iterator = closes.iter();
 
-    for c in closes {
-        match c {
-            Ok((symbol, close_data)) => 
-                if !close_data.is_empty() {
-                    // min/max of the period. unwrap() because those are Option types
-                    let price_diff = PriceDifference {};
-                    let max = MaxPrice {};
-                    let min = MinPrice {};
-                    let windowed_sma = WindowedSMA { window_size: 30 };
+    while let Some(Ok((symbol, close_data))) = closes_iterator.next() {
+        if !close_data.is_empty() {
+            // min/max of the period. unwrap() because those are Option types
+            let price_diff = PriceDifference {};
+            let max = MaxPrice {};
+            let min = MinPrice {};
+            let windowed_sma = WindowedSMA { window_size: 30 };
 
-                    let period_max: f64 = max.calculate(&close_data).await.unwrap();
-                    let period_min: f64 = min.calculate(&close_data).await.unwrap();
-                    let last_price = close_data.last().unwrap_or(&0.0);
-                    let (_, pct_change) = price_diff.calculate(&close_data).await.unwrap_or((0.0, 0.0));
-                    let sma = windowed_sma.calculate(&close_data).await.unwrap_or_default();
+            let period_max: f64 = max.calculate(&close_data).await.unwrap();
+            let period_min: f64 = min.calculate(&close_data).await.unwrap();
+            let last_price = close_data.last().unwrap_or(&0.0);
+            let (_, pct_change) = price_diff.calculate(&close_data).await.unwrap_or((0.0, 0.0));
+            let sma = windowed_sma.calculate(&close_data).await.unwrap_or_default();
 
-                    // a simple way to output CSV data
-                    println!(
-                        "{},{},${:.2},{:.2}%,${:.2},${:.2},${:.2}",
-                        beginning.to_rfc3339(),
-                        symbol,
-                        last_price,
-                        pct_change * 100.0,
-                        period_min,
-                        period_max,
-                        sma.last().unwrap_or(&0.0)
-                    );
-                },
-            _ => println!("Nothing!")
+            // a simple way to output CSV data
+            println!(
+                "{},{},${:.2},{:.2}%,${:.2},${:.2},${:.2}",
+                beginning.to_rfc3339(),
+                symbol,
+                last_price,
+                pct_change * 100.0,
+                period_min,
+                period_max,
+                sma.last().unwrap_or(&0.0)
+            );
         }
-       
     }
+
+    // for c in closes {
+    //     match c {
+    //         Ok((symbol, close_data)) => 
+              
+    //         _ => println!("Nothing!")
+    //     }
+       
+    // }
 
 }
 
